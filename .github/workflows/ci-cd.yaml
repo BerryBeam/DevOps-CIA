@@ -78,7 +78,7 @@ jobs:
         uses: azure/aks-set-context@v3
         with:
           resource-group: rg-cia2-cicd
-          cluster-name: aks-cia2-c
+          cluster-name: aks-cia2-cluster
 
       - name: 6. Deploy to AKS
         run: |
