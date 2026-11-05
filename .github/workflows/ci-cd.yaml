@@ -15,7 +15,7 @@ jobs:
 
     steps:
       # STAGE 1: Checkout Source Code
-      - name: 1. Checkout source code
+      - name: Checkout source code
         uses: actions/checkout@v4
 
       - name: Security scan (Gitleaks)
@@ -68,41 +68,32 @@ jobs:
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.IMAGE_NAME }}:latest
 
-      # STAGE 6: Deploy to Cloud-Hosted Kubernetes (K3s on Azure)
-      - name: 6. Deploy to K3s cluster on Azure VM via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      # STAGE 6: Authenticate & Deploy to AKS
+      - name: Azure Login
+        uses: azure/login@v2
         with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: IMAGE_NAME,GITHUB_SHA
-          script: |
-            mkdir -p ~/k8s
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-            # Fetch deployment & replace the image tag with the exact commit SHA
-            curl -s https://raw.githubusercontent.com/${{ github.repository }}/main/k8s/deployment.yaml | \
-              sed "s|DOCKER_IMAGE_TAG|${IMAGE_NAME}:${GITHUB_SHA}|g" | \
-              kubectl apply -f -
-
-            # Fetch and apply service manifest
-            curl -s https://raw.githubusercontent.com/${{ github.repository }}/main/k8s/service.yaml | \
-              kubectl apply -f -
-
-      # STAGE 7: Verify Deployment Status & Application Availability
-      - name: 7. Verify deployment rollout status
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Set AKS Context
+        uses: azure/aks-set-context@v3
         with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            kubectl rollout status deployment/java-web-app --timeout=90s
-            kubectl get pods -l app=java-web-app -o wide
-            kubectl get svc java-web-app-service
+          resource-group: rg-cia2-cicd
+          cluster-name: aks-cia2-c
 
-      - name: Verify application endpoint availability
+      - name: 6. Deploy to AKS
         run: |
-          echo "Waiting 5 seconds for container network route..."
-          sleep 5
-          curl -I --retry 5 --retry-delay 3 --connect-timeout 5 http://${{ secrets.VM_HOST }}:30080 || exit 1
-          echo "Application is live and responding at http://${{ secrets.VM_HOST }}:30080"
+          # Fetch deployment & replace the image tag with the exact commit SHA
+          curl -s https://raw.githubusercontent.com/${{ github.repository }}/main/k8s/deployment.yaml | \
+            sed "s|DOCKER_IMAGE_TAG|${{ env.IMAGE_NAME }}:${{ github.sha }}|g" | \
+            kubectl apply -f -
+
+          # Fetch and apply service manifest
+          curl -s https://raw.githubusercontent.com/${{ github.repository }}/main/k8s/service.yaml | \
+            kubectl apply -f -
+
+      # STAGE 7: Verify Deployment Status
+      - name: 7. Verify deployment rollout status
+        run: |
+          kubectl rollout status deployment/java-web-app --timeout=90s
+          kubectl get pods -l app=java-web-app -o wide
+          kubectl get svc java-web-app-service
